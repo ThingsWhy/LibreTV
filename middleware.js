@@ -30,8 +30,14 @@ export default async function middleware(request) {
   if (password) {
     passwordHash = await sha256(password);
   }
+
+  const adminpassword = process.env.ADMINPASSWORD || '';
+  let adminpasswordHash = '';
+  if (adminpassword) {
+    adminpasswordHash = await sha256(adminpassword); // 修复变量名
+  }
   
-  // 替换密码占位符
+  // 合并两次替换为一次操作
   let modifiedHtml = originalHtml
     .replace(
       'window.__ENV__.PASSWORD = "{{PASSWORD}}";',
@@ -39,7 +45,7 @@ export default async function middleware(request) {
     )
     .replace(
       'window.__ENV__.ADMINPASSWORD = "{{ADMINPASSWORD}}";',
-      'window.__ENV__.ADMINPASSWORD = ""; // ADMINPASSWORD 功能已移除'
+      `window.__ENV__.ADMINPASSWORD = "${adminpasswordHash}"; // SHA-256 hash`
     );
 
   // 修复Response构造
