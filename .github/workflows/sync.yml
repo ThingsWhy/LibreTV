@@ -4,7 +4,7 @@ permissions:
   contents: write
 
 on:
-  schedule:
+#  schedule:
 #     - cron: "0 4 * * *" # At 12PM UTC+8
   workflow_dispatch:
 
