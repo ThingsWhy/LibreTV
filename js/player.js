@@ -1955,7 +1955,7 @@ function displaySourceModal(aggregatedMap, currentTitle) {
 }
 
 /**
- * (新增) 切换到用户选择的新资源
+ * (修正) 切换到用户选择的新资源
  * @param {string} vod_id - 新的视频ID
  * @param {string} source_code - 新的来源码 (e.g., "tyyszy" or "custom_0")
  * @param {string} new_title - 新的视频标题
@@ -2000,6 +2000,19 @@ async function switchToNewSource(vod_id, source_code, new_title) {
         if (!data.episodes || data.episodes.length === 0) {
             throw new Error('新线路未找到播放资源');
         }
+
+        // --- 修复点 1：开始 ---
+        // (新增) 在重新加载前，将新的剧集列表存入 localStorage
+        // 这样 initPlayer() 才能获取到正确的集数
+        try {
+            localStorage.setItem('currentEpisodes', JSON.stringify(data.episodes));
+            localStorage.setItem('currentVideoTitle', new_title); // 同时更新标题
+            localStorage.setItem('currentSourceCode', source_code); // 更新来源
+        } catch (e) {
+            console.error("无法保存新的剧集列表到 localStorage:", e);
+            // 即使保存失败，也继续尝试播放
+        }
+        // --- 修复点 1：结束 ---
         
         // 5. 找到对应集数的URL
         // currentEpisodeIndex 是 player.js 的全局变量，代表当前播放的集数
@@ -2022,7 +2035,11 @@ async function switchToNewSource(vod_id, source_code, new_title) {
         urlParams.set('source', source_code);
         urlParams.set('url', encodeURIComponent(newEpisodeUrl));
         urlParams.set('title', encodeURIComponent(new_title));
-Setting('index', targetIndex);
+        
+        // --- 修复点 2：开始 ---
+        // (修正) 修复 "Setting is not defined" 错误
+        urlParams.set('index', targetIndex);
+        // --- 修复点 2：结束 ---
         
         // back=... 参数会保留
         
