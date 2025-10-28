@@ -1,3 +1,49 @@
+/**
+ * (新增) 安全转义HTML，防止XSS
+ */
+function escapeHTML(str) {
+    if (!str) return '';
+    return str.toString()
+         .replace(/&/g, '&amp;')
+         .replace(/</g, '&lt;')
+         .replace(/>/g, '&gt;')
+         .replace(/"/g, '&quot;')
+         .replace(/'/g, '&#39;');
+}
+
+/**
+ * (新增) 获取自定义API信息 (从 app.js 移植)
+ * @param {string} customApiIndex - 索引 "0", "1" 等.
+ * @param {Array} customAPIs - 从 localStorage 解析的 customAPIs 数组.
+ * @returns {Object | null}
+ */
+function getCustomApiInfo(customApiIndex, customAPIs) {
+    const index = parseInt(customApiIndex);
+    if (isNaN(index) || index < 0 || index >= customAPIs.length) {
+        return null;
+    }
+    return customAPIs[index];
+}
+
+/**
+ * (新增) 过滤不想显示的内容 (从 app.js 移植)
+ */
+function filterBanned(results) {
+    // 播放器页面默认不开启此过滤，因为用户已选择了视频
+    // 如需开启，请取消下一行的注释
+    // const yellowFilterEnabled = localStorage.getItem('yellowFilterEnabled') === 'true';
+    const yellowFilterEnabled = false; // 默认关闭
+    if (!yellowFilterEnabled) {
+        return results; // 未开启过滤，返回所有
+    }
+    
+    const banned = ['伦理片', '福利', '里番动漫', '门事件', '萝莉少女', '制服诱惑', '国产传媒', 'cosplay', '黑丝诱惑', '无码', '日本无码', '有码', '日本有码', 'SWAG', '网红主播', '色情片', '同性片', '福利视频', '福利片'];
+    return results.filter(item => {
+        const typeName = item.type_name || '';
+        return !banned.some(keyword => typeName.includes(keyword));
+    });
+}
+
 const selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || '[]');
 const customAPIs = JSON.parse(localStorage.getItem('customAPIs') || '[]'); // 存储自定义API列表
 
@@ -1432,56 +1478,25 @@ function closeEmbeddedPlayer() {
     return false;
 }
 
-function renderResourceInfoBar() {
-    // 获取容器元素
+/**
+ * 渲染资源信息栏（包含切换线路按钮）
+ * @param {string} sourceName - 来源名称
+ * @param {number} totalEpisodes - 总集数
+ */
+function renderResourceInfoBar(sourceName, totalEpisodes) {
     const container = document.getElementById('resourceInfoBarContainer');
-    if (!container) {
-        console.error('找不到资源信息卡片容器');
-        return;
-    }
-    
-    // 获取当前视频 source_code
-    const urlParams = new URLSearchParams(window.location.search);
-    const currentSource = urlParams.get('source') || '';
-    
-    // 显示临时加载状态
-    container.innerHTML = `
-      <div class="resource-info-bar-left flex">
-        <span>加载中...</span>
-        <span class="resource-info-bar-videos">-</span>
-      </div>
-      <button class="resource-switch-btn flex" id="switchResourceBtn" onclick="showSwitchResourceModal()">
-        <span class="resource-switch-icon">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4v16m0 0l-6-6m6 6l6-6" stroke="#a67c2d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </span>
-        切换资源
-      </button>
-    `;
+    if (!container) return;
 
-    // 查找当前源名称，从 API_SITES 和 custom_api 中查找即可
-    let resourceName = currentSource
-    if (currentSource && API_SITES[currentSource]) {
-        resourceName = API_SITES[currentSource].name;
-    }
-    if (resourceName === currentSource) {
-        const customAPIs = JSON.parse(localStorage.getItem('customAPIs') || '[]');
-        const customIndex = parseInt(currentSource.replace('custom_', ''), 10);
-        if (customAPIs[customIndex]) {
-            resourceName = customAPIs[customIndex].name || '自定义资源';
-        }
-    }
-
+    // (修改) 添加 "切换线路" 按钮
     container.innerHTML = `
-      <div class="resource-info-bar-left flex">
-        <span>${resourceName}</span>
-        <span class="resource-info-bar-videos">${currentEpisodes.length} 个视频</span>
-      </div>
-      <button class="resource-switch-btn flex" id="switchResourceBtn" onclick="showSwitchResourceModal()">
-        <span class="resource-switch-icon">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 4v16m0 0l-6-6m6 6l6-6" stroke="#a67c2d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </span>
-        切换资源
-      </button>
+        <div class="flex items-center gap-2 min-w-0">
+            <span class="text-sm font-medium text-white truncate">${escapeHTML(sourceName)}</span>
+            <span class="text-xs text-gray-400 flex-shrink-0">共 ${totalEpisodes} 集</span>
+        </div>
+        <button onclick="handleChangeSourceClick()" 
+                class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm transition-colors flex-shrink-0">
+            切换线路
+        </button>
     `;
 }
 
@@ -1789,5 +1804,234 @@ async function switchToResource(sourceKey, vodId) {
         showToast('切换资源失败，请稍后重试', 'error');
     } finally {
         hideLoading();
+    }
+}
+
+/**
+ * (新增) "切换线路" 按钮的点击处理函数
+ */
+async function handleChangeSourceClick() {
+    // 1. 获取当前标题和集数索引
+    const title = document.getElementById('videoTitle').textContent;
+    // currentEpisodeIndex 是 player.js 中的全局变量
+    
+    if (!title || title === '未知视频' || title === '加载中...') {
+        showToast('无法获取当前视频标题，无法切换', 'error');
+        return;
+    }
+
+    // 2. 显示加载动画并开始后台搜索
+    showLoading('正在搜索其他资源...');
+    try {
+        const allResults = await searchAllApisForTitle(title);
+        
+        // 3. 过滤和聚合搜索结果
+        const aggregatedMap = new Map();
+        
+        allResults.forEach(item => {
+            // 使用标准化的标题作为Key
+            const key = (item.vod_name || '').trim();
+            if (!key) return; // 跳过没有标题的项
+
+            if (!aggregatedMap.has(key)) {
+                aggregatedMap.set(key, {
+                    masterDetails: { vod_name: item.vod_name },
+                    sources: []
+                });
+            }
+            // 添加来源信息
+            aggregatedMap.get(key).sources.push({
+                source_name: item.source_name,
+                source_code: item.source_code,
+                vod_id: item.vod_id,
+                api_url: item.api_url // 传递自定义API的URL（如果有）
+            });
+        });
+
+        hideLoading();
+        
+        // 4. 显示结果模态框
+        if (aggregatedMap.size === 0) {
+            showToast('未找到其他可用资源', 'info');
+            return;
+        }
+        
+        displaySourceModal(aggregatedMap, title);
+
+    } catch (error) {
+        hideLoading();
+        console.error('切换线路时搜索失败:', error);
+        showToast('搜索失败，请稍后重试', 'error');
+    }
+}
+
+/**
+ * (新增) 在后台搜索所有选中的API
+ * @param {string} title - 要搜索的视频标题
+ * @returns {Promise<Array>}
+ */
+async function searchAllApisForTitle(title) {
+    // 从 localStorage 获取用户配置
+    const selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || '[]');
+    const customAPIs = JSON.parse(localStorage.getItem('customAPIs') || '[]');
+    
+    if (selectedAPIs.length === 0) {
+        showToast('未选择任何API源', 'warning');
+        return [];
+    }
+    
+    let allResults = [];
+    
+    // 创建所有搜索任务
+    const searchPromises = selectedAPIs.map(apiId => {
+        // searchByAPIAndKeyWord 函数由 search.js 提供 (已在 player.html 引入)
+        // 它内部会处理 custom API
+        return searchByAPIAndKeyWord(apiId, title, customAPIs);
+    });
+
+    // 等待所有任务完成（无论成功与否）
+    const resultsArray = await Promise.allSettled(searchPromises);
+
+    resultsArray.forEach(result => {
+        if (result.status === 'fulfilled' && Array.isArray(result.value) && result.value.length > 0) {
+            // 过滤不想看的内容
+            const filtered = filterBanned(result.value);
+            allResults = allResults.concat(filtered);
+        } else if (result.status === 'rejected') {
+            console.warn('一个API源搜索失败:', result.reason);
+        }
+    });
+    
+    return allResults;
+}
+
+/**
+ * (新增) 将聚合的搜索结果显示在模态框中
+ * @param {Map} aggregatedMap - 聚合后的结果
+ * @param {string} currentTitle - 当前视频标题
+ */
+function displaySourceModal(aggregatedMap, currentTitle) {
+    const modal = document.getElementById('modal');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalContent = document.getElementById('modalContent');
+    
+    if (!modal || !modalTitle || !modalContent) {
+        console.error('播放器模态框元素未找到！');
+        return;
+    }
+
+    modalTitle.innerHTML = `<span class="break-words">切换线路: ${escapeHTML(currentTitle)}</span>`;
+    
+    let contentHtml = '<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">';
+
+    aggregatedMap.forEach((value, key) => {
+        const safeName = escapeHTML(value.masterDetails.vod_name);
+        
+        value.sources.forEach(s => {
+            const safeId = escapeHTML(s.vod_id);
+            const safeSourceCode = escapeHTML(s.source_code);
+            const safeSourceName = escapeHTML(s.source_name);
+            
+            // 准备JS函数参数，转义引号
+            const safeNameForJS = safeName.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+            // 点击按钮将调用 switchToNewSource
+            contentHtml += `
+                <button onclick="switchToNewSource('${safeId}', '${safeSourceCode}', '${safeNameForJS}')"
+                        class="w-full px-4 py-3 bg-[#222] hover:bg-[#333] border border-[#333] rounded-lg transition-colors text-left">
+                    <strong class_="${safeName === currentTitle ? 'text-blue-400' : ''}">${safeSourceName}</strong>
+                    <div class="text-xs text-gray-400 truncate">${safeName}</div>
+                </button>
+            `;
+        });
+    });
+
+    contentHtml += '</div>';
+    modalContent.innerHTML = contentHtml;
+    
+    // (ui.js 中已有 closeModal)
+    // 确保模态框是可见的
+    modal.classList.remove('hidden');
+}
+
+/**
+ * (新增) 切换到用户选择的新资源
+ * @param {string} vod_id - 新的视频ID
+ * @param {string} source_code - 新的来源码 (e.g., "tyyszy" or "custom_0")
+ * @param {string} new_title - 新的视频标题
+ */
+async function switchToNewSource(vod_id, source_code, new_title) {
+    // 1. 关闭模态框并显示加载
+    if (typeof closeModal === 'function') {
+        closeModal();
+    } else {
+        document.getElementById('modal').classList.add('hidden');
+    }
+    showLoading('正在切换线路...');
+
+    try {
+        // 2. 获取自定义API列表（如果需要）
+        const customAPIs = JSON.parse(localStorage.getItem('customAPIs') || '[]');
+        
+        // 3. 构建API参数 (逻辑从 app.js 移植)
+        let apiParams = '';
+
+        if (source_code.startsWith('custom_')) {
+            const customIndex = source_code.replace('custom_', '');
+            // 使用我们添加到 player.js 顶部的 getCustomApiInfo
+            const customApi = getCustomApiInfo(customIndex, customAPIs); 
+            if (!customApi) throw new Error('自定义API配置无效');
+            
+            if (customApi.detail) {
+                apiParams = `&customApi=${encodeURIComponent(customApi.url)}&customDetail=${encodeURIComponent(customApi.detail)}&source=custom`;
+            } else {
+                apiParams = `&customApi=${encodeURIComponent(customApi.url)}&source=custom`;
+            }
+        } else {
+            apiParams = `&source=${source_code}`;
+        }
+
+        // 4. 发起请求获取新线路的详情
+        const cacheBuster = `&_t=${new Date().getTime()}`;
+        // /api/detail 请求由 api.js 拦截处理 (已在 player.html 引入)
+        const response = await fetch(`/api/detail?id=${encodeURIComponent(vod_id)}${apiParams}${cacheBuster}`);
+        const data = await response.json();
+
+        if (!data.episodes || data.episodes.length === 0) {
+            throw new Error('新线路未找到播放资源');
+        }
+        
+        // 5. 找到对应集数的URL
+        // currentEpisodeIndex 是 player.js 的全局变量，代表当前播放的集数
+        let targetIndex = currentEpisodeIndex; 
+        
+        if (targetIndex >= data.episodes.length) {
+            console.warn(`集数索引 (${targetIndex}) 超出新线路范围 (${data.episodes.length})，将播放第1集`);
+            targetIndex = 0;
+        }
+        
+        const newEpisodeUrl = data.episodes[targetIndex];
+
+        // 6. 重新加载播放器页面
+        // 最简单可靠的方法是使用新的URL参数重新加载 watch.html
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        // 设置新的播放参数
+        urlParams.set('id', vod_id);
+        urlParams.set('source', source_code);
+        urlParams.set('url', encodeURIComponent(newEpisodeUrl));
+        urlParams.set('title', encodeURIComponent(new_title));
+Setting('index', targetIndex);
+        
+        // back=... 参数会保留
+        
+        // 页面即将刷新，无需 hideLoading
+        window.location.href = `watch.html?${urlParams.toString()}`;
+
+    } catch (error) {
+        hideLoading();
+        console.error('切换线路失败:', error);
+        showToast(error.message || '切换线路失败', 'error');
     }
 }
