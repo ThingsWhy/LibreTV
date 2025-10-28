@@ -159,155 +159,186 @@ document.addEventListener('passwordVerified', () => {
     initializePageContent();
 });
 
-// 初始化页面内容
+// 初始化页面内容 (修正版 v3)
 function initializePageContent() {
-
     // 解析URL参数
     const urlParams = new URLSearchParams(window.location.search);
     let videoUrl = urlParams.get('url');
-    const title = urlParams.get('title');
+    let title = urlParams.get('title'); // 注意：这里先获取原始（可能编码的）值
     const sourceCode = urlParams.get('source');
     let index = parseInt(urlParams.get('index') || '0');
-    const episodesList = urlParams.get('episodes'); // 从URL获取集数信息
+    const episodesListParam = urlParams.get('episodes'); // 从URL获取集数信息（通常不用）
     const savedPosition = parseInt(urlParams.get('position') || '0'); // 获取保存的播放位置
-    // 解决历史记录问题：检查URL是否是player.html开头的链接
-    // 如果是，说明这是历史记录重定向，需要解析真实的视频URL
+
+    // --- 核心修复：解码 URL 参数 ---
+    try {
+        if (videoUrl) {
+            videoUrl = decodeURIComponent(videoUrl); // 解码视频URL
+        }
+        if (title) {
+            title = decodeURIComponent(title); // 解码标题
+        }
+    } catch (e) {
+        console.error("解码 URL 参数失败:", e);
+        showError("页面链接参数错误");
+        // 尝试使用未解码的值继续，但可能会有问题
+    }
+    // --- 解码结束 ---
+
+    // 解决历史记录重定向问题 (保留原有逻辑)
     if (videoUrl && videoUrl.includes('player.html')) {
+        // ... (此处保留您原有的历史记录URL解析逻辑) ...
         try {
-            // 尝试从嵌套URL中提取真实的视频链接
             const nestedUrlParams = new URLSearchParams(videoUrl.split('?')[1]);
-            // 从嵌套参数中获取真实视频URL
             const nestedVideoUrl = nestedUrlParams.get('url');
-            // 检查嵌套URL是否包含播放位置信息
-            const nestedPosition = nestedUrlParams.get('position');
-            const nestedIndex = nestedUrlParams.get('index');
-            const nestedTitle = nestedUrlParams.get('title');
-
             if (nestedVideoUrl) {
-                videoUrl = nestedVideoUrl;
+                 videoUrl = decodeURIComponent(nestedVideoUrl); // 确保嵌套URL也被解码
+                 // ... (其余更新 URL 的逻辑保留) ...
+                 const nestedPosition = nestedUrlParams.get('position');
+                 const nestedIndex = nestedUrlParams.get('index');
+                 const nestedTitle = nestedUrlParams.get('title'); // 获取嵌套标题
 
-                // 更新当前URL参数
-                const url = new URL(window.location.href);
-                if (!urlParams.has('position') && nestedPosition) {
-                    url.searchParams.set('position', nestedPosition);
-                }
-                if (!urlParams.has('index') && nestedIndex) {
-                    url.searchParams.set('index', nestedIndex);
-                }
-                if (!urlParams.has('title') && nestedTitle) {
-                    url.searchParams.set('title', nestedTitle);
-                }
-                // 替换当前URL
-                window.history.replaceState({}, '', url);
+                 const currentUrl = new URL(window.location.href);
+                 if (!urlParams.has('position') && nestedPosition) {
+                    currentUrl.searchParams.set('position', nestedPosition);
+                 }
+                 if (!urlParams.has('index') && nestedIndex) {
+                    index = parseInt(nestedIndex, 10); // 更新 index
+                    currentUrl.searchParams.set('index', index);
+                 }
+                 if (!urlParams.has('title') && nestedTitle) {
+                    title = decodeURIComponent(nestedTitle); // 更新 title 并解码
+                    currentUrl.searchParams.set('title', encodeURIComponent(title)); // 注意：更新URL时要编码回去
+                 }
+                 window.history.replaceState({}, '', currentUrl);
+
             } else {
                 showError('历史记录链接无效，请返回首页重新访问');
+                return; // 无法继续
             }
         } catch (e) {
+            console.error("解析嵌套历史记录URL失败:", e);
+            showError('解析历史记录链接时出错');
+            return;
         }
     }
 
-    // 保存当前视频URL
+    // 保存当前解码后的视频URL
     currentVideoUrl = videoUrl || '';
 
-    // 从localStorage获取数据
+    // 设置全局变量 (使用解码后的 title)
     currentVideoTitle = title || localStorage.getItem('currentVideoTitle') || '未知视频';
     currentEpisodeIndex = index;
 
     // 设置自动连播开关状态
     autoplayEnabled = localStorage.getItem('autoplayEnabled') !== 'false'; // 默认为true
-    document.getElementById('autoplayToggle').checked = autoplayEnabled;
+    const autoplayToggle = document.getElementById('autoplayToggle');
+     if(autoplayToggle){ // 添加检查以防元素不存在
+         autoplayToggle.checked = autoplayEnabled;
+         // 监听自动连播开关变化
+         autoplayToggle.addEventListener('change', function (e) {
+            autoplayEnabled = e.target.checked;
+            localStorage.setItem('autoplayEnabled', autoplayEnabled);
+         });
+     }
+
 
     // 获取广告过滤设置
     adFilteringEnabled = localStorage.getItem(PLAYER_CONFIG.adFilteringStorage) !== 'false'; // 默认为true
 
-    // 监听自动连播开关变化
-    document.getElementById('autoplayToggle').addEventListener('change', function (e) {
-        autoplayEnabled = e.target.checked;
-        localStorage.setItem('autoplayEnabled', autoplayEnabled);
-    });
-
-    // 优先使用URL传递的集数信息，否则从localStorage获取
+    // --- 核心修复：可靠加载 currentEpisodes ---
+    // 切换线路时，switchToNewSource 会将新的列表存入 localStorage
     try {
-        if (episodesList) {
-            // 如果URL中有集数数据，优先使用它
-            currentEpisodes = JSON.parse(decodeURIComponent(episodesList));
-
-        } else {
-            // 否则从localStorage获取
-            currentEpisodes = JSON.parse(localStorage.getItem('currentEpisodes') || '[]');
-
-        }
-
-        // 检查集数索引是否有效，如果无效则调整为0
-        if (index < 0 || (currentEpisodes.length > 0 && index >= currentEpisodes.length)) {
-            // 如果索引太大，则使用最大有效索引
-            if (index >= currentEpisodes.length && currentEpisodes.length > 0) {
-                index = currentEpisodes.length - 1;
-            } else {
-                index = 0;
-            }
-
-            // 更新URL以反映修正后的索引
-            const newUrl = new URL(window.location.href);
-            newUrl.searchParams.set('index', index);
-            window.history.replaceState({}, '', newUrl);
-        }
-
-        // 更新当前索引为验证过的值
-        currentEpisodeIndex = index;
-
+        currentEpisodes = JSON.parse(localStorage.getItem('currentEpisodes') || '[]');
         episodesReversed = localStorage.getItem('episodesReversed') === 'true';
+
+        // 再次检查集数索引是否有效
+        if (index < 0 || (currentEpisodes.length > 0 && index >= currentEpisodes.length)) {
+             if (index >= currentEpisodes.length && currentEpisodes.length > 0) {
+                 index = currentEpisodes.length - 1;
+             } else {
+                 index = 0;
+             }
+             // 更新URL以反映修正后的索引 (如果需要)
+             const newUrl = new URL(window.location.href);
+             if (parseInt(newUrl.searchParams.get('index') || '0', 10) !== index) {
+                 newUrl.searchParams.set('index', index);
+                 window.history.replaceState({}, '', newUrl);
+             }
+        }
+        currentEpisodeIndex = index; // 确保使用修正后的索引
+
     } catch (e) {
+        console.error("加载剧集列表失败:", e);
         currentEpisodes = [];
         currentEpisodeIndex = 0;
         episodesReversed = false;
+        showError("加载剧集列表失败");
     }
+    // --- 加载 currentEpisodes 结束 ---
 
-    // 设置页面标题
+    // 设置页面标题和顶部标题 (使用解码后的 title)
     document.title = currentVideoTitle + ' - LibreTV播放器';
-    document.getElementById('videoTitle').textContent = currentVideoTitle;
+    const titleEl = document.getElementById('videoTitle');
+     if(titleEl){
+         titleEl.textContent = currentVideoTitle;
+     }
 
-    // 初始化播放器
-    if (videoUrl) {
-        initPlayer(videoUrl);
-    } else {
-        showError('无效的视频链接');
-    }
+    // --- 核心修复：修正 renderResourceInfoBar 调用 ---
+    // 获取来源名称 (您需要确保 getSourceName 函数存在且能工作)
+    const sourceName = getSourceName(sourceCode); // 假设您有这个函数
+    const totalEpisodes = Array.isArray(currentEpisodes) ? currentEpisodes.length : 0;
+    renderResourceInfoBar(sourceName, totalEpisodes); // 传递正确的集数
+    // --- 调用修正结束 ---
 
-    // 渲染源信息
-    renderResourceInfoBar();
-
-    // 更新集数信息
+    // 更新集数信息 (如 "第 1/10 集")
     updateEpisodeInfo();
 
-    // 渲染集数列表
+    // 渲染集数列表按钮
     renderEpisodes();
 
-    // 更新按钮状态
+    // 更新 上一集/下一集 按钮状态
     updateButtonStates();
 
-    // 更新排序按钮状态
+    // 更新 排序 按钮状态
     updateOrderButton();
 
-    // 添加对进度条的监听，确保点击准确跳转
+
+    // --- 核心修复：调用 initPlayer (创建播放器实例) ---
+    // 确保有有效的视频 URL
+    if (currentVideoUrl) {
+        initPlayer(currentVideoUrl); // 调用播放器创建函数 (使用解码后的 URL)
+    } else if (Array.isArray(currentEpisodes) && currentEpisodes.length > 0 && currentEpisodes[currentEpisodeIndex]) {
+         // 如果 URL 参数没有 videoUrl，尝试从剧集列表恢复
+         currentVideoUrl = currentEpisodes[currentEpisodeIndex];
+         console.log("从剧集列表恢复播放 URL:", currentVideoUrl);
+         initPlayer(currentVideoUrl);
+    } else {
+        showError('无效或缺失视频链接，无法播放');
+        return; // 无法播放，退出
+    }
+    // --- 调用结束 ---
+
+
+    // (保留) 添加对进度条的监听，确保点击准确跳转
     setTimeout(() => {
         setupProgressBarPreciseClicks();
     }, 1000);
 
-    // 添加键盘快捷键事件监听
+    // (保留) 添加键盘快捷键事件监听
     document.addEventListener('keydown', handleKeyboardShortcuts);
 
-    // 添加页面离开事件监听，保存播放位置
+    // (保留) 添加页面离开事件监听，保存播放位置
     window.addEventListener('beforeunload', saveCurrentProgress);
 
-    // 新增：页面隐藏（切后台/切标签）时也保存
+    // (保留) 新增：页面隐藏（切后台/切标签）时也保存
     document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'hidden') {
             saveCurrentProgress();
         }
     });
 
-    // 视频暂停时也保存
+    // (保留) 视频暂停时也保存
     const waitForVideo = setInterval(() => {
         if (art && art.video) {
             art.video.addEventListener('pause', saveCurrentProgress);
@@ -325,6 +356,33 @@ function initializePageContent() {
             clearInterval(waitForVideo);
         }
     }, 200);
+}
+
+// (新增或确保存在) 获取来源名称的辅助函数
+// 您需要根据您的 API_SITES 或 customAPIs 结构来实现这个函数
+function getSourceName(sourceCode) {
+    if (!sourceCode) return '未知来源';
+
+    // 尝试从全局 API_SITES 获取 (需要确保 config.js 已加载)
+    if (typeof API_SITES !== 'undefined' && API_SITES[sourceCode]) {
+        return API_SITES[sourceCode].name || sourceCode;
+    }
+
+    // 尝试从 localStorage 的 customAPIs 获取
+    if (sourceCode.startsWith('custom_')) {
+        try {
+            const customAPIsList = JSON.parse(localStorage.getItem('customAPIs') || '[]');
+            const index = parseInt(sourceCode.replace('custom_', ''), 10);
+            if (!isNaN(index) && customAPIsList[index]) {
+                return customAPIsList[index].name || '自定义源';
+            }
+        } catch (e) {
+            console.error("解析 customAPIs 失败:", e);
+        }
+    }
+
+    // 如果都找不到，返回原始 code
+    return sourceCode;
 }
 
 // 处理键盘快捷键
