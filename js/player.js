@@ -159,203 +159,204 @@ document.addEventListener('passwordVerified', () => {
     initializePageContent();
 });
 
-// 初始化页面内容 (修正版 v3)
-function initializePageContent() {
-    // 解析URL参数
+// (Replaced) initializePageContent function - Prioritizes URL params, fetches details if needed
+async function initializePageContent() { // Made async
+    // Parse URL parameters
     const urlParams = new URLSearchParams(window.location.search);
     let videoUrl = urlParams.get('url');
-    let title = urlParams.get('title'); // 注意：这里先获取原始（可能编码的）值
-    const sourceCode = urlParams.get('source');
-    let index = parseInt(urlParams.get('index') || '0');
-    const episodesListParam = urlParams.get('episodes'); // 从URL获取集数信息（通常不用）
-    const savedPosition = parseInt(urlParams.get('position') || '0'); // 获取保存的播放位置
+    let title = urlParams.get('title');
+    let sourceCode = urlParams.get('source');
+    let vodId = urlParams.get('id'); // Get ID needed for fetching details
+    let index = parseInt(urlParams.get('index') || '0', 10);
+    const savedPosition = parseInt(urlParams.get('position') || '0');
 
-    // --- 核心修复：解码 URL 参数 ---
+    // Decode URL parameters safely
     try {
-        if (videoUrl) {
-            videoUrl = decodeURIComponent(videoUrl); // 解码视频URL
-        }
-        if (title) {
-            title = decodeURIComponent(title); // 解码标题
-        }
+        if (videoUrl) videoUrl = decodeURIComponent(videoUrl);
+        if (title) title = decodeURIComponent(title);
+         // sourceCode and vodId typically don't need decoding, but handle if necessary
+         // if (sourceCode) sourceCode = decodeURIComponent(sourceCode);
+         // if (vodId) vodId = decodeURIComponent(vodId);
     } catch (e) {
-        console.error("解码 URL 参数失败:", e);
-        showError("页面链接参数错误");
-        // 尝试使用未解码的值继续，但可能会有问题
+        console.error("Failed to decode URL parameters:", e);
+        showError("Invalid page link parameters.");
+        return; // Stop initialization if params are corrupted
     }
-    // --- 解码结束 ---
 
-    // 解决历史记录重定向问题 (保留原有逻辑)
+    // Handle history redirect logic (remains mostly the same, ensure decoding)
     if (videoUrl && videoUrl.includes('player.html')) {
-        // ... (此处保留您原有的历史记录URL解析逻辑) ...
         try {
             const nestedUrlParams = new URLSearchParams(videoUrl.split('?')[1]);
             const nestedVideoUrl = nestedUrlParams.get('url');
             if (nestedVideoUrl) {
-                 videoUrl = decodeURIComponent(nestedVideoUrl); // 确保嵌套URL也被解码
-                 // ... (其余更新 URL 的逻辑保留) ...
-                 const nestedPosition = nestedUrlParams.get('position');
-                 const nestedIndex = nestedUrlParams.get('index');
-                 const nestedTitle = nestedUrlParams.get('title'); // 获取嵌套标题
+                videoUrl = decodeURIComponent(nestedVideoUrl); // Ensure nested URL is decoded
 
-                 const currentUrl = new URL(window.location.href);
-                 if (!urlParams.has('position') && nestedPosition) {
-                    currentUrl.searchParams.set('position', nestedPosition);
-                 }
-                 if (!urlParams.has('index') && nestedIndex) {
-                    index = parseInt(nestedIndex, 10); // 更新 index
-                    currentUrl.searchParams.set('index', index);
-                 }
-                 if (!urlParams.has('title') && nestedTitle) {
-                    title = decodeURIComponent(nestedTitle); // 更新 title 并解码
-                    currentUrl.searchParams.set('title', encodeURIComponent(title)); // 注意：更新URL时要编码回去
-                 }
+                const nestedTitle = nestedUrlParams.get('title');
+                const nestedIndex = nestedUrlParams.get('index');
+                const nestedSource = nestedUrlParams.get('source');
+                const nestedId = nestedUrlParams.get('id');
+                // Update current vars if they were missing in the outer URL
+                 if (!title && nestedTitle) title = decodeURIComponent(nestedTitle);
+                 if (isNaN(index) && nestedIndex) index = parseInt(nestedIndex, 10);
+                 if (!sourceCode && nestedSource) sourceCode = nestedSource;
+                 if (!vodId && nestedId) vodId = nestedId;
+
+                // Update browser URL history (replaceState) - carefully re-encode needed params
+                const currentUrl = new URL(window.location.href);
+                 currentUrl.searchParams.set('url', encodeURIComponent(videoUrl)); // Re-encode
+                 if (title) currentUrl.searchParams.set('title', encodeURIComponent(title)); // Re-encode
+                 if (!isNaN(index)) currentUrl.searchParams.set('index', index);
+                 if (sourceCode) currentUrl.searchParams.set('source', sourceCode);
+                 if (vodId) currentUrl.searchParams.set('id', vodId);
+                 // Keep position if it was in the original outer URL
+                 if (urlParams.has('position')) currentUrl.searchParams.set('position', savedPosition);
+
                  window.history.replaceState({}, '', currentUrl);
 
-            } else {
-                showError('历史记录链接无效，请返回首页重新访问');
-                return; // 无法继续
-            }
+            } else { throw new Error('Nested URL parameter "url" missing.'); }
         } catch (e) {
-            console.error("解析嵌套历史记录URL失败:", e);
-            showError('解析历史记录链接时出错');
+            console.error("Failed to parse nested history URL:", e);
+            showError("Invalid history link. Please go back and try again.");
             return;
         }
     }
 
-    // 保存当前解码后的视频URL
+    // Set global variables
     currentVideoUrl = videoUrl || '';
+    currentVideoTitle = title || 'Unknown Video';
+    currentEpisodeIndex = !isNaN(index) ? index : 0; // Ensure index is a number
 
-    // 设置全局变量 (使用解码后的 title)
-    currentVideoTitle = title || localStorage.getItem('currentVideoTitle') || '未知视频';
-    currentEpisodeIndex = index;
-
-    // 设置自动连播开关状态
-    autoplayEnabled = localStorage.getItem('autoplayEnabled') !== 'false'; // 默认为true
-    const autoplayToggle = document.getElementById('autoplayToggle');
-     if(autoplayToggle){ // 添加检查以防元素不存在
-         autoplayToggle.checked = autoplayEnabled;
-         // 监听自动连播开关变化
-         autoplayToggle.addEventListener('change', function (e) {
-            autoplayEnabled = e.target.checked;
-            localStorage.setItem('autoplayEnabled', autoplayEnabled);
-         });
-     }
-
-
-    // 获取广告过滤设置
-    adFilteringEnabled = localStorage.getItem(PLAYER_CONFIG.adFilteringStorage) !== 'false'; // 默认为true
-
-    // --- 核心修复：可靠加载 currentEpisodes ---
-    // 切换线路时，switchToNewSource 会将新的列表存入 localStorage
+    // Load episodes from localStorage - This is now a fallback/cache
+    let episodesFromStorage = [];
     try {
-        currentEpisodes = JSON.parse(localStorage.getItem('currentEpisodes') || '[]');
-        episodesReversed = localStorage.getItem('episodesReversed') === 'true';
+        const storedEpisodes = localStorage.getItem('currentEpisodes');
+        if (storedEpisodes) {
+            episodesFromStorage = JSON.parse(storedEpisodes);
+            if (!Array.isArray(episodesFromStorage)) episodesFromStorage = []; // Validate
+        }
+    } catch (e) { console.error("Failed to parse episodes from localStorage:", e); }
 
-        // 再次检查集数索引是否有效
-        if (index < 0 || (currentEpisodes.length > 0 && index >= currentEpisodes.length)) {
-             if (index >= currentEpisodes.length && currentEpisodes.length > 0) {
-                 index = currentEpisodes.length - 1;
-             } else {
-                 index = 0;
-             }
-             // 更新URL以反映修正后的索引 (如果需要)
-             const newUrl = new URL(window.location.href);
-             if (parseInt(newUrl.searchParams.get('index') || '0', 10) !== index) {
-                 newUrl.searchParams.set('index', index);
+    // --- Core Logic: Fetch details if needed ---
+    if (episodesFromStorage.length === 0 && vodId && sourceCode) {
+        // Episodes not in storage, but we have ID and source from URL - Fetch them!
+        showLoading("Loading episode list..."); // Show loading indicator
+        try {
+            currentEpisodes = await fetchDetailsIfNeeded(vodId, sourceCode); // Use the new async function
+            // Save fetched episodes to localStorage for future use/navigation
+            localStorage.setItem('currentEpisodes', JSON.stringify(currentEpisodes));
+             // Verify index again after fetching
+             if (currentEpisodeIndex >= currentEpisodes.length) {
+                 console.warn(`Index ${currentEpisodeIndex} out of bounds after fetch, resetting to 0.`);
+                 currentEpisodeIndex = 0;
+                 // Optionally update URL again if index changed
+                 const newUrl = new URL(window.location.href);
+                 newUrl.searchParams.set('index', currentEpisodeIndex);
                  window.history.replaceState({}, '', newUrl);
              }
+
+        } catch (error) {
+            console.error("Failed to fetch episode details:", error);
+            showError(`Failed to load episode list: ${error.message}`);
+            currentEpisodes = []; // Ensure it's an empty array on failure
+        } finally {
+            hideLoading();
         }
-        currentEpisodeIndex = index; // 确保使用修正后的索引
-
-    } catch (e) {
-        console.error("加载剧集列表失败:", e);
-        currentEpisodes = [];
-        currentEpisodeIndex = 0;
-        episodesReversed = false;
-        showError("加载剧集列表失败");
+    } else {
+        // Use episodes from storage
+        currentEpisodes = episodesFromStorage;
+         // Verify index against stored episodes
+         if (currentEpisodeIndex >= currentEpisodes.length && currentEpisodes.length > 0) {
+             console.warn(`Index ${currentEpisodeIndex} out of bounds for stored episodes, resetting to last.`);
+             currentEpisodeIndex = currentEpisodes.length - 1;
+             // Optionally update URL again if index changed
+             const newUrl = new URL(window.location.href);
+             newUrl.searchParams.set('index', currentEpisodeIndex);
+             window.history.replaceState({}, '', newUrl);
+         } else if (currentEpisodes.length === 0 && currentEpisodeIndex !== 0) {
+             currentEpisodeIndex = 0; // Reset if no episodes
+         }
     }
-    // --- 加载 currentEpisodes 结束 ---
+    // --- End Fetch details logic ---
 
-    // 设置页面标题和顶部标题 (使用解码后的 title)
-    document.title = currentVideoTitle + ' - LibreTV播放器';
+
+    // Load other settings from localStorage
+    episodesReversed = localStorage.getItem('episodesReversed') === 'true';
+    autoplayEnabled = localStorage.getItem('autoplayEnabled') !== 'false';
+    adFilteringEnabled = localStorage.getItem(PLAYER_CONFIG.adFilteringStorage) !== 'false';
+
+
+    // ---- Update UI based on potentially fetched/loaded data ----
+
+    // Set page title and header
+    document.title = currentVideoTitle + ' - LibreTV Player';
     const titleEl = document.getElementById('videoTitle');
-     if(titleEl){
-         titleEl.textContent = currentVideoTitle;
-     }
+    if (titleEl) titleEl.textContent = currentVideoTitle;
 
-    // --- 核心修复：修正 renderResourceInfoBar 调用 ---
-    // 获取来源名称 (您需要确保 getSourceName 函数存在且能工作)
-    const sourceName = getSourceName(sourceCode); // 假设您有这个函数
+    // Render source info bar (now uses potentially fetched episode count)
+    const sourceName = getSourceName(sourceCode);
     const totalEpisodes = Array.isArray(currentEpisodes) ? currentEpisodes.length : 0;
-    renderResourceInfoBar(sourceName, totalEpisodes); // 传递正确的集数
-    // --- 调用修正结束 ---
+    renderResourceInfoBar(sourceName, totalEpisodes);
 
-    // 更新集数信息 (如 "第 1/10 集")
-    updateEpisodeInfo();
+    // Update "Episode X/Y" text
+    updateEpisodeInfo(); // Uses global currentEpisodeIndex and currentEpisodes.length
 
-    // 渲染集数列表按钮
-    renderEpisodes();
+    // Render episode buttons
+    renderEpisodes(); // Uses global currentEpisodes
 
-    // 更新 上一集/下一集 按钮状态
+    // Update Prev/Next button states
     updateButtonStates();
 
-    // 更新 排序 按钮状态
+    // Update Sort button state
     updateOrderButton();
 
-
-    // --- 核心修复：调用 initPlayer (创建播放器实例) ---
-    // 确保有有效的视频 URL
-    if (currentVideoUrl) {
-        initPlayer(currentVideoUrl); // 调用播放器创建函数 (使用解码后的 URL)
-    } else if (Array.isArray(currentEpisodes) && currentEpisodes.length > 0 && currentEpisodes[currentEpisodeIndex]) {
-         // 如果 URL 参数没有 videoUrl，尝试从剧集列表恢复
+    // Initialize the actual video player (Artplayer/HLS)
+    // Validate the final video URL before playing
+     if (!currentVideoUrl && totalEpisodes > 0 && currentEpisodes[currentEpisodeIndex]) {
+         // If URL was missing but we fetched/loaded episodes, get URL from the list
          currentVideoUrl = currentEpisodes[currentEpisodeIndex];
-         console.log("从剧集列表恢复播放 URL:", currentVideoUrl);
-         initPlayer(currentVideoUrl);
+         console.log("Recovered video URL from episode list:", currentVideoUrl);
+     }
+
+    if (currentVideoUrl) {
+        initPlayer(currentVideoUrl); // Call the function that creates Artplayer instance
     } else {
-        showError('无效或缺失视频链接，无法播放');
-        return; // 无法播放，退出
+        showError('No valid video URL available to play.');
+        return; // Stop if no URL
     }
-    // --- 调用结束 ---
 
+    // Set up autoplay toggle listener
+    const autoplayToggle = document.getElementById('autoplayToggle');
+    if (autoplayToggle) {
+        autoplayToggle.checked = autoplayEnabled;
+        autoplayToggle.addEventListener('change', function (e) {
+            autoplayEnabled = e.target.checked;
+            localStorage.setItem('autoplayEnabled', autoplayEnabled);
+        });
+    }
 
-    // (保留) 添加对进度条的监听，确保点击准确跳转
-    setTimeout(() => {
-        setupProgressBarPreciseClicks();
-    }, 1000);
-
-    // (保留) 添加键盘快捷键事件监听
+    // Setup other listeners (progress bar, keyboard, visibility, etc. - remains the same)
+    setTimeout(() => { setupProgressBarPreciseClicks(); }, 1000);
     document.addEventListener('keydown', handleKeyboardShortcuts);
-
-    // (保留) 添加页面离开事件监听，保存播放位置
     window.addEventListener('beforeunload', saveCurrentProgress);
-
-    // (保留) 新增：页面隐藏（切后台/切标签）时也保存
-    document.addEventListener('visibilitychange', function () {
-        if (document.visibilityState === 'hidden') {
-            saveCurrentProgress();
-        }
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') saveCurrentProgress();
     });
+    // Interval/event listeners for saving progress during playback (remains the same)
+     const waitForVideo = setInterval(() => {
+         if (art && art.video) {
+             art.video.addEventListener('pause', saveCurrentProgress);
+             let lastSave = 0;
+             art.video.addEventListener('timeupdate', function() {
+                 const now = Date.now();
+                 if (now - lastSave > 5000) { // Throttle saving
+                     saveCurrentProgress();
+                     lastSave = now;
+                 }
+             });
+             clearInterval(waitForVideo);
+         }
+     }, 200);
 
-    // (保留) 视频暂停时也保存
-    const waitForVideo = setInterval(() => {
-        if (art && art.video) {
-            art.video.addEventListener('pause', saveCurrentProgress);
-
-            // 新增：播放进度变化时节流保存
-            let lastSave = 0;
-            art.video.addEventListener('timeupdate', function() {
-                const now = Date.now();
-                if (now - lastSave > 5000) { // 每5秒最多保存一次
-                    saveCurrentProgress();
-                    lastSave = now;
-                }
-            });
-
-            clearInterval(waitForVideo);
-        }
-    }, 200);
 }
 
 // (新增或确保存在) 获取来源名称的辅助函数
@@ -958,34 +959,43 @@ function updateButtonStates() {
     }
 }
 
-// 渲染集数按钮
+// (Replaced) renderEpisodes (player.js version) - Uses safe DOM methods
 function renderEpisodes() {
-    const episodesList = document.getElementById('episodesList');
-    if (!episodesList) return;
+    const episodesListContainer = document.getElementById('episodesList');
+    if (!episodesListContainer) return;
+
+    episodesListContainer.innerHTML = ''; // Clear previous buttons
 
     if (!currentEpisodes || currentEpisodes.length === 0) {
-        episodesList.innerHTML = '<div class="col-span-full text-center text-gray-400 py-8">没有可用的集数</div>';
+        const noEpisodesDiv = document.createElement('div');
+        noEpisodesDiv.className = 'col-span-full text-center text-gray-400 py-8';
+        noEpisodesDiv.textContent = 'No episodes available'; // Safe text
+        episodesListContainer.appendChild(noEpisodesDiv);
         return;
     }
 
-    const episodes = episodesReversed ? [...currentEpisodes].reverse() : currentEpisodes;
-    let html = '';
+    const episodesToRender = episodesReversed ? [...currentEpisodes].reverse() : currentEpisodes;
 
-    episodes.forEach((episode, index) => {
-        // 根据倒序状态计算真实的剧集索引
+    episodesToRender.forEach((episodeUrl, index) => {
         const realIndex = episodesReversed ? currentEpisodes.length - 1 - index : index;
         const isActive = realIndex === currentEpisodeIndex;
 
-        html += `
-            <button id="episode-${realIndex}" 
-                    onclick="playEpisode(${realIndex})" 
-                    class="px-4 py-2 ${isActive ? 'episode-active' : '!bg-[#222] hover:!bg-[#333] hover:!shadow-none'} !border ${isActive ? '!border-blue-500' : '!border-[#333]'} rounded-lg transition-colors text-center episode-btn">
-                ${realIndex + 1}
-            </button>
-        `;
-    });
+        const button = document.createElement('button');
+        button.id = `episode-${realIndex}`;
+        button.className = `px-4 py-2 !border rounded-lg transition-colors text-center episode-btn ${
+            isActive
+            ? 'episode-active !border-blue-500'
+            : '!bg-[#222] hover:!bg-[#333] hover:!shadow-none !border-[#333]'
+        }`;
+        button.textContent = realIndex + 1; // Display episode number safely
 
-    episodesList.innerHTML = html;
+        // Use addEventListener for click handling
+        button.addEventListener('click', () => {
+            playEpisode(realIndex); // Call existing function
+        });
+
+        episodesListContainer.appendChild(button);
+    });
 }
 
 // 播放指定集数
@@ -2108,5 +2118,59 @@ async function switchToNewSource(vod_id, source_code, new_title) {
         hideLoading();
         console.error('切换线路失败:', error);
         showToast(error.message || '切换线路失败', 'error');
+    }
+}
+
+// (New) Fetches episode details if not available in localStorage
+async function fetchDetailsIfNeeded(vodId, sourceCode) {
+    if (!vodId || !sourceCode) {
+        throw new Error("Missing ID or Source Code for fetching details.");
+    }
+
+    console.log(`Fetching details for ID: ${vodId}, Source: ${sourceCode}`);
+
+    // API parameter building (adapted from showDetails/switchToNewSource)
+    let apiParams = '';
+    const customAPIsList = JSON.parse(localStorage.getItem('customAPIs') || '[]'); // Fetch custom APIs config
+
+    if (sourceCode.startsWith('custom_')) {
+        const customIndex = sourceCode.replace('custom_', '');
+        const customApi = getCustomApiInfo(customIndex, customAPIsList); // Use helper
+        if (!customApi) throw new Error('Invalid custom API configuration during fetch.');
+
+        if (customApi.detail) {
+            apiParams = `&customApi=${encodeURIComponent(customApi.url)}&customDetail=${encodeURIComponent(customApi.detail)}&source=custom`;
+        } else {
+            apiParams = `&customApi=${encodeURIComponent(customApi.url)}&source=custom`;
+        }
+    } else {
+        apiParams = `&source=${sourceCode}`;
+    }
+
+    const timestamp = new Date().getTime();
+    const cacheBuster = `&_t=${timestamp}`;
+
+    try {
+        const response = await fetch(`/api/detail?id=${encodeURIComponent(vodId)}${apiParams}${cacheBuster}`);
+        if (!response.ok) {
+             throw new Error(`API request failed with status ${response.status}`);
+        }
+        const data = await response.json();
+
+        if (data.code !== 200 || !Array.isArray(data.episodes)) {
+             throw new Error(`API returned invalid data: ${data.msg || 'Format error'}`);
+        }
+
+        if (data.episodes.length === 0) {
+            console.warn("Fetched details, but no episodes were found.");
+            return []; // Return empty array if no episodes
+        }
+
+        console.log(`Successfully fetched ${data.episodes.length} episodes.`);
+        return data.episodes; // Return the fetched episodes array
+
+    } catch (error) {
+        console.error("Error during fetchDetailsIfNeeded:", error);
+        throw error; // Re-throw the error to be caught by the caller
     }
 }
