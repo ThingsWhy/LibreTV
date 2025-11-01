@@ -967,7 +967,7 @@ async function search() {
         let resultsFound = false; // Flag to check if any results came back
 
         selectedAPIs.forEach(apiId => {
-            const promise = searchByAPIAndKeyWord(apiId, query)
+            const promise = searchByAPIAndKeyWord(apiId, query, customAPIs)
                 .then(results => {
                     if (!results || results.length === 0) return;
 
