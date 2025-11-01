@@ -62,8 +62,10 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 // 初始化API复选框
+// (已修改) 初始化API复选框 - 添加状态指示器
 function initAPICheckboxes() {
     const container = document.getElementById('apiCheckboxes');
+    if (!container) return; // (新增) 健壮性检查
     container.innerHTML = '';
 
     // 添加普通API组标题
@@ -83,13 +85,15 @@ function initAPICheckboxes() {
         const checked = selectedAPIs.includes(apiKey);
 
         const checkbox = document.createElement('div');
-        checkbox.className = 'flex items-center';
+        // (修改) 使用 flex 和 ml-auto 来放置状态指示器
+        checkbox.className = 'flex items-center'; 
         checkbox.innerHTML = `
             <input type="checkbox" id="api_${apiKey}" 
                    class="form-checkbox h-3 w-3 text-blue-600 bg-[#222] border border-[#333]" 
                    ${checked ? 'checked' : ''} 
                    data-api="${apiKey}">
             <label for="api_${apiKey}" class="ml-1 text-xs text-gray-400 truncate">${api.name}</label>
+            <span class="api-status ml-auto" id="status_api_${apiKey}" title="未测试"></span>
         `;
         normaldiv.appendChild(checkbox);
 
@@ -108,11 +112,12 @@ function initAPICheckboxes() {
     checkAdultAPIsSelected();
 }
 
-// 添加成人API列表
+// (已修改) 添加成人API列表 - 添加状态指示器
 function addAdultAPI() {
     // 仅在隐藏设置为false时添加成人API组
     if (!HIDE_BUILTIN_ADULT_APIS && (localStorage.getItem('yellowFilterEnabled') === 'false')) {
         const container = document.getElementById('apiCheckboxes');
+        if (!container) return; // (新增) 健壮性检查
 
         // 添加成人API组标题
         const adultdiv = document.createElement('div');
@@ -135,6 +140,7 @@ function addAdultAPI() {
             const checked = selectedAPIs.includes(apiKey);
 
             const checkbox = document.createElement('div');
+            // (修改) 使用 flex 和 ml-auto 来放置状态指示器
             checkbox.className = 'flex items-center';
             checkbox.innerHTML = `
                 <input type="checkbox" id="api_${apiKey}" 
@@ -142,6 +148,7 @@ function addAdultAPI() {
                        ${checked ? 'checked' : ''} 
                        data-api="${apiKey}">
                 <label for="api_${apiKey}" class="ml-1 text-xs text-pink-400 truncate">${api.name}</label>
+                <span class="api-status ml-auto" id="status_api_${apiKey}" title="未测试"></span>
             `;
             adultdiv.appendChild(checkbox);
 
@@ -206,7 +213,7 @@ function checkAdultAPIsSelected() {
     }
 }
 
-// 渲染自定义API列表
+// (已修改) 渲染自定义API列表 - 添加状态指示器
 function renderCustomAPIsList() {
     const container = document.getElementById('customApisList');
     if (!container) return;
@@ -224,6 +231,8 @@ function renderCustomAPIsList() {
         const adultTag = api.isAdult ? '<span class="text-xs text-pink-400 mr-1">(18+)</span>' : '';
         // 新增 detail 地址显示
         const detailLine = api.detail ? `<div class="text-xs text-gray-400 truncate">detail: ${api.detail}</div>` : '';
+        
+        // (修改) 调整 innerHTML 以包含状态指示器
         apiItem.innerHTML = `
             <div class="flex items-center flex-1 min-w-0">
                 <input type="checkbox" id="custom_api_${index}" 
@@ -237,8 +246,9 @@ function renderCustomAPIsList() {
                     <div class="text-xs text-gray-500 truncate">${api.url}</div>
                     ${detailLine}
                 </div>
+                <span class="api-status ml-2" id="status_custom_${index}" title="未测试"></span>
             </div>
-            <div class="flex items-center">
+            <div class="flex items-center flex-shrink-0 ml-1">
                 <button class="text-blue-500 hover:text-blue-700 text-xs px-1" onclick="editCustomApi(${index})">✎</button>
                 <button class="text-red-500 hover:text-red-700 text-xs px-1" onclick="removeCustomApi(${index})">✕</button>
             </div>
@@ -1633,4 +1643,102 @@ function saveStringAsFile(content, fileName) {
     window.URL.revokeObjectURL(url);
 }
 
-// 移除Node.js的require语句，因为这是在浏览器环境中运行的
+// --- (新增) API 健康检查功能 ---
+
+/**
+ * 异步测试单个API的健康状况
+ * @param {string} apiKey - API的键 (例如 "tyyszy" 或 "custom_0")
+ */
+async function testApi(apiKey) {
+    const isCustom = apiKey.startsWith('custom_');
+    const statusElement = document.getElementById(isCustom ? `status_${apiKey}` : `status_api_${apiKey}`);
+    
+    if (!statusElement) return; // 找不到状态元素
+
+    // 设置基础样式
+    let baseClasses = 'api-status';
+    if (isCustom) {
+        baseClasses += ' ml-2';
+    } else {
+        baseClasses += ' ml-auto';
+    }
+
+    // 1. 设置为 "测试中" 状态
+    statusElement.className = `${baseClasses} testing`;
+    statusElement.title = '正在测试...';
+
+    const startTime = performance.now();
+    let latency = -1;
+    let status = 'bad'; // 默认失败
+
+    try {
+        // (注意) 确保 search.js 中的 searchByAPIAndKeyWord 函数已加载
+        // 我们传入全局的 customAPIs 数组，searchByAPIAndKeyWord 会自行处理
+        const results = await searchByAPIAndKeyWord(apiKey, "test", customAPIs);
+        const endTime = performance.now();
+        latency = Math.round(endTime - startTime);
+
+        // 检查返回结果是否有效
+        if (Array.isArray(results)) {
+            // 即使返回 0 个结果，也算 API 响应成功
+            if (latency < 1000) {
+                status = 'good';
+            } else if (latency < 3000) {
+                status = 'medium';
+            } else {
+                status = 'bad'; // 响应太慢
+            }
+        } else {
+            // API 返回了无效数据 (非数组)
+            status = 'bad';
+        }
+
+    } catch (error) {
+        // 请求失败 (超时、网络错误、JSON解析失败等)
+        console.warn(`API 测试失败 ${apiKey}:`, error);
+        status = 'bad';
+    }
+
+    // 2. 更新最终状态
+    statusElement.className = `${baseClasses} ${status}`;
+    if (status === 'bad') {
+        statusElement.title = '失效 / 超时';
+    } else {
+        statusElement.title = `畅通 (延迟: ${latency}ms)`;
+    }
+}
+
+/**
+ * (新增) 运行所有 API 的健康检查
+ * 由 "测试所有源" 按钮触发
+ */
+async function testAllApis() {
+    // 检查 searchByAPIAndKeyWord 是否存在
+    if (typeof searchByAPIAndKeyWord !== 'function') {
+        showToast('搜索功能 (search.js) 尚未加载!', 'error');
+        return;
+    }
+
+    showToast('开始测试所有API源...', 'info');
+
+    const testPromises = [];
+
+    // 1. 获取所有内置 API
+    if (typeof API_SITES !== 'undefined') {
+        Object.keys(API_SITES).forEach(apiKey => {
+            // 为每个 API 创建一个测试 Promise
+            testPromises.push(testApi(apiKey));
+        });
+    }
+
+    // 2. 获取所有自定义 API
+    customAPIs.forEach((api, index) => {
+        const apiKey = `custom_${index}`;
+        testPromises.push(testApi(apiKey));
+    });
+
+    // 3. 并行运行所有测试，并等待它们全部完成
+    await Promise.allSettled(testPromises);
+
+    showToast('API源测试完成!', 'success');
+}
