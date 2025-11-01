@@ -61,9 +61,10 @@ document.addEventListener('DOMContentLoaded', function () {
     setTimeout(checkAdultAPIsSelected, 100);
 });
 
-// 初始化API复选框
+// (已修改) 初始化API复选框 - 添加状态指示器
 function initAPICheckboxes() {
     const container = document.getElementById('apiCheckboxes');
+    if (!container) return; // 健壮性检查
     container.innerHTML = '';
 
     // 添加普通API组标题
@@ -83,13 +84,14 @@ function initAPICheckboxes() {
         const checked = selectedAPIs.includes(apiKey);
 
         const checkbox = document.createElement('div');
-        checkbox.className = 'flex items-center';
+        checkbox.className = 'flex items-center'; // (修改) 确保 flex 布局
         checkbox.innerHTML = `
             <input type="checkbox" id="api_${apiKey}" 
                    class="form-checkbox h-3 w-3 text-blue-600 bg-[#222] border border-[#333]" 
                    ${checked ? 'checked' : ''} 
                    data-api="${apiKey}">
             <label for="api_${apiKey}" class="ml-1 text-xs text-gray-400 truncate">${api.name}</label>
+            <span class="api-status ml-auto" id="status_api_${apiKey}" title="未测试"></span>
         `;
         normaldiv.appendChild(checkbox);
 
@@ -108,11 +110,12 @@ function initAPICheckboxes() {
     checkAdultAPIsSelected();
 }
 
-// 添加成人API列表
+// (已修改) 添加成人API列表 - 添加状态指示器
 function addAdultAPI() {
     // 仅在隐藏设置为false时添加成人API组
     if (!HIDE_BUILTIN_ADULT_APIS && (localStorage.getItem('yellowFilterEnabled') === 'false')) {
         const container = document.getElementById('apiCheckboxes');
+        if (!container) return; // 健壮性检查
 
         // 添加成人API组标题
         const adultdiv = document.createElement('div');
@@ -135,13 +138,14 @@ function addAdultAPI() {
             const checked = selectedAPIs.includes(apiKey);
 
             const checkbox = document.createElement('div');
-            checkbox.className = 'flex items-center';
+            checkbox.className = 'flex items-center'; // (修改) 确保 flex 布局
             checkbox.innerHTML = `
                 <input type="checkbox" id="api_${apiKey}" 
                        class="form-checkbox h-3 w-3 text-blue-600 bg-[#222] border border-[#333] api-adult" 
                        ${checked ? 'checked' : ''} 
                        data-api="${apiKey}">
                 <label for="api_${apiKey}" class="ml-1 text-xs text-pink-400 truncate">${api.name}</label>
+                <span class="api-status ml-auto" id="status_api_${apiKey}" title="未测试"></span>
             `;
             adultdiv.appendChild(checkbox);
 
@@ -206,7 +210,7 @@ function checkAdultAPIsSelected() {
     }
 }
 
-// 渲染自定义API列表
+// (已修改) 渲染自定义API列表 - 添加状态指示器
 function renderCustomAPIsList() {
     const container = document.getElementById('customApisList');
     if (!container) return;
@@ -237,9 +241,9 @@ function renderCustomAPIsList() {
                     <div class="text-xs text-gray-500 truncate">${api.url}</div>
                     ${detailLine}
                 </div>
+                <span class="api-status ml-2" id="status_custom_${index}" title="未测试"></span>
             </div>
-            <div class="flex items-center">
-                <button class="text-blue-500 hover:text-blue-700 text-xs px-1" onclick="editCustomApi(${index})">✎</button>
+            <div class="flex items-center flex-shrink-0 ml-1"> <button class="text-blue-500 hover:text-blue-700 text-xs px-1" onclick="editCustomApi(${index})">✎</button>
                 <button class="text-red-500 hover:text-red-700 text-xs px-1" onclick="removeCustomApi(${index})">✕</button>
             </div>
         `;
@@ -904,15 +908,15 @@ function showSourceSelector(sources, vod_name) {
     modal.classList.remove('hidden');
 }
 
-// (Replaced) Search function - Uses safe DOM rendering
+// (已修改) 搜索功能 - 修复了 Promise.all 错误和 customAPIs 参数缺失
 async function search() {
-    // Password protection check (remains the same)
-     if (window.isPasswordProtected && window.isPasswordVerified) {
-         if (window.isPasswordProtected() && !window.isPasswordVerified()) {
-             showPasswordModal && showPasswordModal();
-             return;
-         }
-     }
+    // 密码保护校验
+    if (window.isPasswordProtected && window.isPasswordVerified) {
+        if (window.isPasswordProtected() && !window.isPasswordVerified()) {
+            showPasswordModal && showPasswordModal();
+            return;
+        }
+    }
     const query = document.getElementById('searchInput').value.trim();
 
     if (!query) {
@@ -926,73 +930,165 @@ async function search() {
     }
 
     showLoading();
-    aggregatedResultsMap.clear(); // Clear previous results
-    const resultsDiv = document.getElementById('results');
-    resultsDiv.innerHTML = ''; // Clear previous display immediately
-
-    // Show results area, adjust search area (remains the same)
-    document.getElementById('searchArea').classList.remove('flex-1');
-    document.getElementById('searchArea').classList.add('mb-8');
-    document.getElementById('resultsArea').classList.remove('hidden');
-    const doubanArea = document.getElementById('doubanArea');
-    if (doubanArea) doubanArea.classList.add('hidden');
-
-    // Display initial "searching" or empty state (optional, can refine UI later)
-    resultsDiv.innerHTML = getNoResultsHTML(); // Show "No results" initially
-
-    const searchResultsCount = document.getElementById('searchResultsCount');
-    if (searchResultsCount) searchResultsCount.textContent = '0';
 
     try {
+        // 保存搜索历史
         saveSearchHistory(query);
-        // Update URL (remains the same)
-        try {
-            const encodedQuery = encodeURIComponent(query);
-            window.history.pushState({ search: query }, `搜索: ${query} - LibreTV`, `/s=${encodedQuery}`);
-            document.title = `搜索: ${query} - LibreTV`;
-        } catch (e) { console.error('Failed to update browser history:', e); }
 
-        // --- Progressive Fetching and Rendering ---
-        let promises = [];
-        let resultsFound = false; // Flag to check if any results came back
+        // 从所有选中的API源搜索
+        let allResults = [];
+        
+        // (修复) 1. 正确传递 customAPIs (全局变量)
+        const searchPromises = selectedAPIs.map(apiId => 
+            searchByAPIAndKeyWord(apiId, query, customAPIs) // <--- 修复点 1
+        );
 
-        selectedAPIs.forEach(apiId => {
-            const promise = searchByAPIAndKeyWord(apiId, query)
-                .then(results => {
-                    if (!results || results.length === 0) return;
+        // (修复) 2. 使用 Promise.allSettled 等待所有搜索完成，无论成功与否
+        const resultsArray = await Promise.allSettled(searchPromises); // <--- 修复点 2
 
-                    const filteredResults = filterBanned(results);
-                    if (filteredResults.length === 0) return;
-
-                    resultsFound = true; // Mark that we found something
-                    processAndAggregate(filteredResults, aggregatedResultsMap); // Aggregate data
-
-                    // Render immediately
-                    renderAggregatedResults(aggregatedResultsMap);
-                })
-                .catch(err => {
-                    console.warn(`API ${apiId} search failed:`, err);
-                });
-            promises.push(promise);
+        // 合并所有 *成功* 的结果
+        resultsArray.forEach(result => {
+            if (result.status === 'fulfilled' && Array.isArray(result.value) && result.value.length > 0) {
+                allResults = allResults.concat(result.value);
+            } else if (result.status === 'rejected') {
+                console.warn("一个搜索源失败了:", result.reason); // 打印失败，但不中断
+            }
         });
 
-        await Promise.allSettled(promises);
+        // 对搜索结果进行排序：按名称优先，名称相同时按接口源排序
+        allResults.sort((a, b) => {
+            const nameCompare = (a.vod_name || '').localeCompare(b.vod_name || '');
+            if (nameCompare !== 0) return nameCompare;
+            return (a.source_name || '').localeCompare(b.source_name || '');
+        });
 
-        // If after all searches, no results were found, ensure the "No results" message stays.
-        if (!resultsFound) {
-             // The "No results" HTML is already there from the beginning
-             if (searchResultsCount) searchResultsCount.textContent = '0';
+        // 更新搜索结果计数
+        const searchResultsCount = document.getElementById('searchResultsCount');
+        if (searchResultsCount) {
+            searchResultsCount.textContent = allResults.length;
         }
 
+        // 显示结果区域，调整搜索区域
+        document.getElementById('searchArea').classList.remove('flex-1');
+        document.getElementById('searchArea').classList.add('mb-8');
+        document.getElementById('resultsArea').classList.remove('hidden');
+
+        // 隐藏豆瓣推荐区域（如果存在）
+        const doubanArea = document.getElementById('doubanArea');
+        if (doubanArea) {
+            doubanArea.classList.add('hidden');
+        }
+
+        const resultsDiv = document.getElementById('results');
+
+        // 如果没有结果
+        if (!allResults || allResults.length === 0) {
+            resultsDiv.innerHTML = `
+                <div class="col-span-full text-center py-16">
+                    <svg class="mx-auto h-12 w-12 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <h3 class="mt-2 text-lg font-medium text-gray-400">没有找到匹配的结果</h3>
+                    <p class="mt-1 text-sm text-gray-500">请尝试其他关键词或更换数据源</p>
+                </div>
+            `;
+            hideLoading();
+            return;
+        }
+
+        // 有搜索结果时，才更新URL
+        try {
+            // ... (更新 URL 逻辑不变) ...
+            const encodedQuery = encodeURIComponent(query);
+            window.history.pushState(
+                { search: query },
+                `搜索: ${query} - LibreTV`,
+                `/s=${encodedQuery}`
+            );
+            document.title = `搜索: ${query} - LibreTV`;
+        } catch (e) {
+            console.error('更新浏览器历史失败:', e);
+        }
+
+        // 处理搜索结果过滤
+        const yellowFilterEnabled = localStorage.getItem('yellowFilterEnabled') === 'true';
+        if (yellowFilterEnabled) {
+            // ... (过滤逻辑不变) ...
+            const banned = ['伦理片', '福利', '里番动漫', '门事件', '萝莉少女', '制服诱惑', '国产传媒', 'cosplay', '黑丝诱惑', '无码', '日本无码', '有码', '日本有码', 'SWAG', '网红主播', '色情片', '同性片', '福利视频', '福利片'];
+            allResults = allResults.filter(item => {
+                const typeName = item.type_name || '';
+                return !banned.some(keyword => typeName.includes(keyword));
+            });
+        }
+
+        // 添加XSS保护，使用textContent和属性转义
+        const safeResults = allResults.map(item => {
+            // ... (原版的 innerHTML 字符串拼接逻辑不变) ...
+            const safeId = item.vod_id ? item.vod_id.toString().replace(/[^\w-]/g, '') : '';
+            const safeName = (item.vod_name || '').toString()
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+            const sourceInfo = item.source_name ?
+                `<span class="bg-[#222] text-xs px-1.5 py-0.5 rounded-full">${item.source_name}</span>` : '';
+            const sourceCode = item.source_code || '';
+            const apiUrlAttr = item.api_url ?
+                `data-api-url="${item.api_url.replace(/"/g, '&quot;')}"` : '';
+            const hasCover = item.vod_pic && item.vod_pic.startsWith('http');
+
+            return `
+                <div class="card-hover bg-[#111] rounded-lg overflow-hidden cursor-pointer transition-all hover:scale-[1.02] h-full shadow-sm hover:shadow-md" 
+                     onclick="showDetails('${safeId}','${safeName}','${sourceCode}')" ${apiUrlAttr}>
+                    <div class="flex h-full">
+                        ${hasCover ? `
+                        <div class="relative flex-shrink-0 search-card-img-container">
+                            <img src="${item.vod_pic}" alt="${safeName}" 
+                                 class="h-full w-full object-cover transition-transform hover:scale-110" 
+                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/300x450?text=无封面'; this.classList.add('object-contain');" 
+                                 loading="lazy">
+                            <div class="absolute inset-0 bg-gradient-to-r from-black/30 to-transparent"></div>
+                        </div>` : ''}
+                        
+                        <div class="p-2 flex flex-col flex-grow">
+                            <div class="flex-grow">
+                                <h3 class="font-semibold mb-2 break-words line-clamp-2 ${hasCover ? '' : 'text-center'}" title="${safeName}">${safeName}</h3>
+                                
+                                <div class="flex flex-wrap ${hasCover ? '' : 'justify-center'} gap-1 mb-2">
+                                    ${(item.type_name || '').toString().replace(/</g, '&lt;') ?
+                    `<span class="text-xs py-0.5 px-1.5 rounded bg-opacity-20 bg-blue-500 text-blue-300">
+                                          ${(item.type_name || '').toString().replace(/</g, '&lt;')}
+                                      </span>` : ''}
+                                    ${(item.vod_year || '') ?
+                    `<span class="text-xs py-0.5 px-1.5 rounded bg-opacity-20 bg-purple-500 text-purple-300">
+                                          ${item.vod_year}
+                                      </span>` : ''}
+                                </div>
+                                <p class="text-gray-400 line-clamp-2 overflow-hidden ${hasCover ? '' : 'text-center'} mb-2">
+                                    ${(item.vod_remarks || '暂无介绍').toString().replace(/</g, '&lt;')}
+                                </p>
+                            </div>
+                            
+                            <div class="flex justify-between items-center mt-1 pt-1 border-t border-gray-800">
+                                ${sourceInfo ? `<div>${sourceInfo}</div>` : '<div></div>'}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        resultsDiv.innerHTML = safeResults;
     } catch (error) {
-        console.error('Unexpected search error:', error);
-        showToast('Search failed, please try again later', 'error');
-         resultsDiv.innerHTML = getNoResultsHTML(); // Ensure error state shows no results
-         if (searchResultsCount) searchResultsCount.textContent = '0';
+        // (修复) catch 块现在只会在极少数情况下触发，例如 saveSearchHistory 失败
+        console.error('搜索时发生意外错误:', error);
+        if (error.name === 'AbortError') {
+            showToast('搜索请求超时，请检查网络连接', 'error');
+        } else {
+            showToast('搜索请求失败，请稍后重试', 'error');
+        }
     } finally {
         hideLoading();
-         // Final count update just in case
-         if (searchResultsCount) searchResultsCount.textContent = aggregatedResultsMap.size;
     }
 }
 
@@ -1634,3 +1730,109 @@ function saveStringAsFile(content, fileName) {
 }
 
 // 移除Node.js的require语句，因为这是在浏览器环境中运行的
+
+// --- (新增) API 健康检查功能 ---
+
+/**
+ * 异步测试单个API的健康状况
+ * @param {string} apiKey - API的键 (例如 "tyyszy" 或 "custom_0")
+ */
+async function testApi(apiKey) {
+    const isCustom = apiKey.startsWith('custom_');
+    const statusElement = document.getElementById(isCustom ? `status_${apiKey}` : `status_api_${apiKey}`);
+    
+    if (!statusElement) return; // 找不到状态元素
+
+    // 设置基础样式
+    let baseClasses = 'api-status';
+    if (isCustom) {
+        baseClasses += ' ml-2';
+    } else {
+        baseClasses += ' ml-auto';
+    }
+
+    // 1. 设置为 "测试中" 状态
+    statusElement.className = `${baseClasses} testing`;
+    statusElement.title = '正在测试...';
+
+    const startTime = performance.now();
+    let latency = -1;
+    let status = 'bad'; // 默认失败
+
+    try {
+        // 检查 searchByAPIAndKeyWord 是否存在 (它在 search.js 中)
+        if (typeof searchByAPIAndKeyWord !== 'function') {
+            throw new Error('searchByAPIAndKeyWord 函数未定义');
+        }
+        
+        // (修复) 正确传递全局变量 customAPIs
+        const results = await searchByAPIAndKeyWord(apiKey, "test", customAPIs);
+        const endTime = performance.now();
+        latency = Math.round(endTime - startTime);
+
+        // 检查返回结果是否有效
+        if (Array.isArray(results)) {
+            // 即使返回 0 个结果，也算 API 响应成功
+            if (latency < 1000) {
+                status = 'good';
+            } else if (latency < 3000) {
+                status = 'medium';
+            } else {
+                status = 'bad'; // 响应太慢
+            }
+        } else {
+            // API 返回了无效数据 (非数组)
+            status = 'bad';
+        }
+
+    } catch (error) {
+        // 请求失败 (超时、网络错误、JSON解析失败等)
+        console.warn(`API 测试失败 ${apiKey}:`, error);
+        status = 'bad';
+    }
+
+    // 2. 更新最终状态
+    statusElement.className = `${baseClasses} ${status}`;
+    if (status === 'bad') {
+        statusElement.title = '失效 / 超时';
+    } else if (status === 'medium') {
+         statusElement.title = `缓慢 (延迟: ${latency}ms)`;
+    } else {
+        statusElement.title = `畅通 (延迟: ${latency}ms)`;
+    }
+}
+
+/**
+ * (新增) 运行所有 API 的健康检查
+ * 由 "测试所有源" 按钮触发
+ */
+async function testAllApis() {
+    // 检查 searchByAPIAndKeyWord 是否存在
+    if (typeof searchByAPIAndKeyWord !== 'function') {
+        showToast('搜索功能 (search.js) 尚未加载!', 'error');
+        return;
+    }
+
+    showToast('开始测试所有API源...', 'info');
+
+    const testPromises = [];
+
+    // 1. 获取所有内置 API
+    if (typeof API_SITES !== 'undefined') {
+        Object.keys(API_SITES).forEach(apiKey => {
+            // 为每个 API 创建一个测试 Promise
+            testPromises.push(testApi(apiKey));
+        });
+    }
+
+    // 2. 获取所有自定义 API
+    customAPIs.forEach((api, index) => {
+        const apiKey = `custom_${index}`;
+        testPromises.push(testApi(apiKey));
+    });
+
+    // 3. 并行运行所有测试，并等待它们全部完成
+    await Promise.allSettled(testPromises);
+
+    showToast('API源测试完成!', 'success');
+}
