@@ -219,19 +219,19 @@
     transition: all 0.3s ease;
 }
 
-/* 畅通：绿色 (< 1s) */
+/* 畅通：绿色 (< 1.5s) */
 .api-status.good {
     background-color: #2ecc71;
     box-shadow: 0 0 6px #2ecc71;
 }
 
-/* 缓慢：橙色 (1s - 3s) */
+/* 缓慢：橙色 (1.5s - 4s) */
 .api-status.medium {
     background-color: #f39c12;
     box-shadow: 0 0 6px #f39c12;
 }
 
-/* 失效：红色 (> 3s / 失败) */
+/* 失效：红色 (> 4s / 失败) */
 .api-status.bad {
     background-color: #e74c3c;
     box-shadow: 0 0 6px #e74c3c;

@@ -1765,17 +1765,19 @@ async function testApi(apiKey) {
             throw new Error('searchByAPIAndKeyWord 函数未定义');
         }
         
-        // (修复) 正确传递全局变量 customAPIs
-        const results = await searchByAPIAndKeyWord(apiKey, "test", customAPIs);
+        // (修复) 1. 使用 "你好" 作为测试词，以模拟真实请求，绕过简单防火墙
+        // (修复) 2. 正确传递全局变量 customAPIs
+        const results = await searchByAPIAndKeyWord(apiKey, "你好", customAPIs); // <--- 关键修复点
+        
         const endTime = performance.now();
         latency = Math.round(endTime - startTime);
 
         // 检查返回结果是否有效
         if (Array.isArray(results)) {
             // 即使返回 0 个结果，也算 API 响应成功
-            if (latency < 1000) {
+            if (latency < 1500) { // 1.5秒内算畅通
                 status = 'good';
-            } else if (latency < 3000) {
+            } else if (latency < 4000) { // 4秒内算缓慢
                 status = 'medium';
             } else {
                 status = 'bad'; // 响应太慢
@@ -1786,7 +1788,7 @@ async function testApi(apiKey) {
         }
 
     } catch (error) {
-        // 请求失败 (超时、网络错误、JSON解析失败等)
+        // 请求失败 (超时、网络错误、JSON解析失败、403等)
         console.warn(`API 测试失败 ${apiKey}:`, error);
         status = 'bad';
     }
@@ -1794,7 +1796,7 @@ async function testApi(apiKey) {
     // 2. 更新最终状态
     statusElement.className = `${baseClasses} ${status}`;
     if (status === 'bad') {
-        statusElement.title = '失效 / 超时';
+        statusElement.title = '失效 / 超时 / 403';
     } else if (status === 'medium') {
          statusElement.title = `缓慢 (延迟: ${latency}ms)`;
     } else {
