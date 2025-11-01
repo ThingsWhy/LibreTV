@@ -939,6 +939,10 @@ async function search() {
         let allResults = [];
         
         // (修复) 1. 正确传递 customAPIs (全局变量)
+        // (注意) 我们依赖 search.js 中的 searchByAPIAndKeyWord 函数
+        if (typeof searchByAPIAndKeyWord !== 'function') {
+             throw new Error("searchByAPIAndKeyWord is not defined. Make sure search.js is loaded.");
+        }
         const searchPromises = selectedAPIs.map(apiId => 
             searchByAPIAndKeyWord(apiId, query, customAPIs) // <--- 修复点 1
         );
@@ -999,7 +1003,6 @@ async function search() {
 
         // 有搜索结果时，才更新URL
         try {
-            // ... (更新 URL 逻辑不变) ...
             const encodedQuery = encodeURIComponent(query);
             window.history.pushState(
                 { search: query },
@@ -1014,7 +1017,6 @@ async function search() {
         // 处理搜索结果过滤
         const yellowFilterEnabled = localStorage.getItem('yellowFilterEnabled') === 'true';
         if (yellowFilterEnabled) {
-            // ... (过滤逻辑不变) ...
             const banned = ['伦理片', '福利', '里番动漫', '门事件', '萝莉少女', '制服诱惑', '国产传媒', 'cosplay', '黑丝诱惑', '无码', '日本无码', '有码', '日本有码', 'SWAG', '网红主播', '色情片', '同性片', '福利视频', '福利片'];
             allResults = allResults.filter(item => {
                 const typeName = item.type_name || '';
@@ -1022,9 +1024,8 @@ async function search() {
             });
         }
 
-        // 添加XSS保护，使用textContent和属性转义
+        // 添加XSS保护 (此部分仍然使用 innerHTML，如需 XSS 修复需替换为 DOM 操作)
         const safeResults = allResults.map(item => {
-            // ... (原版的 innerHTML 字符串拼接逻辑不变) ...
             const safeId = item.vod_id ? item.vod_id.toString().replace(/[^\w-]/g, '') : '';
             const safeName = (item.vod_name || '').toString()
                 .replace(/</g, '&lt;')
@@ -1080,7 +1081,6 @@ async function search() {
 
         resultsDiv.innerHTML = safeResults;
     } catch (error) {
-        // (修复) catch 块现在只会在极少数情况下触发，例如 saveSearchHistory 失败
         console.error('搜索时发生意外错误:', error);
         if (error.name === 'AbortError') {
             showToast('搜索请求超时，请检查网络连接', 'error');
@@ -1731,7 +1731,7 @@ function saveStringAsFile(content, fileName) {
 
 // 移除Node.js的require语句，因为这是在浏览器环境中运行的
 
-// --- (新增) API 健康检查功能 ---
+// --- (新增) API 健康检查功能 (采用 ?ac=list 方案) ---
 
 /**
  * 异步测试单个API的健康状况
@@ -1758,45 +1758,86 @@ async function testApi(apiKey) {
     const startTime = performance.now();
     let latency = -1;
     let status = 'bad'; // 默认失败
+    let finalTestUrl = ''; // 最终要请求的完整 API URL
 
     try {
-        // 检查 searchByAPIAndKeyWord 是否存在 (它在 search.js 中)
-        if (typeof searchByAPIAndKeyWord !== 'function') {
-            throw new Error('searchByAPIAndKeyWord 函数未定义');
-        }
-        
-        // (修复) 1. 使用 "你好" 作为测试词，以模拟真实请求，绕过简单防火墙
-        // (修复) 2. 正确传递全局变量 customAPIs
-        const results = await searchByAPIAndKeyWord(apiKey, "你好", customAPIs); // <--- 关键修复点
-        
-        const endTime = performance.now();
-        latency = Math.round(endTime - startTime);
-
-        // 检查返回结果是否有效
-        if (Array.isArray(results)) {
-            // 即使返回 0 个结果，也算 API 响应成功
-            if (latency < 1500) { // 1.5秒内算畅通
-                status = 'good';
-            } else if (latency < 4000) { // 4秒内算缓慢
-                status = 'medium';
+        // 2. 获取 API 的基础 URL
+        let baseUrl = '';
+        if (isCustom) {
+            const customIndex = parseInt(apiKey.replace('custom_', ''), 10);
+            if (customIndex < customAPIs.length && customAPIs[customIndex]) {
+                baseUrl = customAPIs[customIndex].url; // e.g., https://custom.com/api.php/provide/vod
             } else {
-                status = 'bad'; // 响应太慢
+                throw new Error('自定义 API 索引无效');
             }
         } else {
-            // API 返回了无效数据 (非数组)
-            status = 'bad';
+            if (API_SITES[apiKey]) {
+                baseUrl = API_SITES[apiKey].api; // e.g., https://bfzyapi.com/api.php/provide/vod
+            } else {
+                throw new Error('内置 API 键无效');
+            }
+        }
+
+        // 3. 构建您指定的 ?ac=list 测试 URL
+        const urlObj = new URL(baseUrl);
+        urlObj.search = ''; // 清除所有现有的查询参数
+        urlObj.searchParams.append('ac', 'list'); // 添加 'ac=list'
+        finalTestUrl = urlObj.toString();
+        
+        // 4. 准备和执行代理 fetch
+        // (此逻辑模仿自 search.js 中的 searchByAPIAndKeyWord)
+        
+        // 确保 config.js 中的常量已加载
+        if (typeof PROXY_URL === 'undefined' || typeof API_CONFIG === 'undefined') {
+            throw new Error('config.js 未加载');
+        }
+
+        const controller = new AbortController();
+        // (修改) 使用一个稍短的 5 秒超时进行测试
+        const timeoutId = setTimeout(() => controller.abort(), 5000); 
+
+        const response = await fetch(PROXY_URL + encodeURIComponent(finalTestUrl), {
+            headers: API_CONFIG.search.headers,
+            signal: controller.signal,
+            cache: 'no-store' // 确保获取最新状态
+        });
+        
+        clearTimeout(timeoutId);
+        const endTime = performance.now();
+        latency = Math.round(endTime - startTime);
+        
+        // 5. 检查 HTTP 状态码 (例如 403 Forbidden 会在这里被捕获)
+        if (!response.ok) {
+            throw new Error(`HTTP 状态 ${response.status}`);
+        }
+
+        // 6. 验证 JSON 响应是否符合您的要求
+        const data = await response.json();
+        
+        if (data && data.code === 1 && Array.isArray(data.list)) {
+            // 这是成功的响应！
+            if (latency < 1500) {
+                status = 'good'; // 1.5秒内 = 畅通
+            } else if (latency < 4000) {
+                status = 'medium'; // 4秒内 = 缓慢
+            } else {
+                status = 'bad'; // 超过4秒 = 失效 (太慢)
+            }
+        } else {
+            // API 响应了，但 JSON 格式不正确 (e.g., code != 1)
+            throw new Error('JSON 格式无效或 code != 1');
         }
 
     } catch (error) {
-        // 请求失败 (超时、网络错误、JSON解析失败、403等)
-        console.warn(`API 测试失败 ${apiKey}:`, error);
+        // 捕获所有错误：fetch 失败, 超时, 403, JSON 解析失败, 或格式验证失败
+        console.warn(`API 测试失败 ${apiKey}:`, error.message);
         status = 'bad';
     }
 
-    // 2. 更新最终状态
+    // 7. 更新最终 UI 状态
     statusElement.className = `${baseClasses} ${status}`;
     if (status === 'bad') {
-        statusElement.title = '失效 / 超时 / 403';
+        statusElement.title = `失效 / 错误 / 超时`;
     } else if (status === 'medium') {
          statusElement.title = `缓慢 (延迟: ${latency}ms)`;
     } else {
@@ -1809,25 +1850,25 @@ async function testApi(apiKey) {
  * 由 "测试所有源" 按钮触发
  */
 async function testAllApis() {
-    // 检查 searchByAPIAndKeyWord 是否存在
-    if (typeof searchByAPIAndKeyWord !== 'function') {
-        showToast('搜索功能 (search.js) 尚未加载!', 'error');
+    // 检查依赖的常量是否存在
+    if (typeof PROXY_URL === 'undefined' || typeof API_CONFIG === 'undefined') {
+        showToast('配置文件 (config.js) 尚未加载!', 'error');
         return;
     }
 
     showToast('开始测试所有API源...', 'info');
 
-    const testPromises = [];
+    const testPromises = []; // 存储所有测试的 Promise
 
-    // 1. 获取所有内置 API
+    // 1. 获取所有内置 API (来自 config.js)
     if (typeof API_SITES !== 'undefined') {
         Object.keys(API_SITES).forEach(apiKey => {
-            // 为每个 API 创建一个测试 Promise
+            // 为每个 API 创建一个测试 Promise 并添加到数组
             testPromises.push(testApi(apiKey));
         });
     }
 
-    // 2. 获取所有自定义 API
+    // 2. 获取所有自定义 API (来自 localStorage)
     customAPIs.forEach((api, index) => {
         const apiKey = `custom_${index}`;
         testPromises.push(testApi(apiKey));
