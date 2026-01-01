@@ -139,12 +139,15 @@ async function handleApiRequest(url) {
                 let episodes = [];
                 
                 if (videoDetail.vod_play_url) {
-                    // 分割不同播放源（采集站通常用 $$$ 分隔多条线路）
+                    // 分割不同播放源
                     const playSources = videoDetail.vod_play_url.split('$$$');
                     
-                    // 【核心修改 1】查找包含 .m3u8 的源
-                    // 如果所有源都不含 m3u8，则 targetSource 为 undefined，后续逻辑不执行，episodes 为空
-                    const targetSource = playSources.find(source => source.includes('.m3u8'));
+                    // 【修改点 1】查找包含 .m3u8 或 .mp4 的源
+                    // 逻辑：优先找 m3u8，如果没找到，就找 mp4
+                    let targetSource = playSources.find(source => source.includes('.m3u8'));
+                    if (!targetSource) {
+                        targetSource = playSources.find(source => source.includes('.mp4'));
+                    }
                     
                     if (targetSource) {
                         const episodeList = targetSource.split('#');
@@ -152,15 +155,14 @@ async function handleApiRequest(url) {
                         // 从每个集数中提取URL
                         episodes = episodeList.map(ep => {
                             const parts = ep.split('$');
-                            // 兼容格式：'第1集$https://...' 或 'https://...'
-                            // 如果有$分隔，取后半部分；否则取整体
                             return parts.length > 1 ? parts[1] : parts[0];
                         }).filter(url => {
-                            // 【核心修改 2】双重验证：必须是 HTTP(S) 链接且必须包含 .m3u8
-                            // 这样可以过滤掉分享页链接、MP4直链等不兼容格式
-                            return url && 
-                                   (url.startsWith('http://') || url.startsWith('https://')) && 
-                                   url.includes('.m3u8');
+                            // 【修改点 2】验证 URL：允许 http/https 开头，且必须包含 .m3u8 或 .mp4
+                            if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+                                return false;
+                            }
+                            const lowerUrl = url.toLowerCase();
+                            return lowerUrl.includes('.m3u8') || lowerUrl.includes('.mp4');
                         });
                     }
                 }

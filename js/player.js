@@ -513,6 +513,16 @@ function initPlayer(videoUrl) {
         art = null;
     }
 
+    let videoType = 'm3u8'; // 默认为 m3u8
+    const lowerUrl = videoUrl.toLowerCase();
+    if (lowerUrl.includes('.mp4')) {
+        videoType = 'mp4'; // 如果是 mp4，明确告诉播放器
+    } else if (lowerUrl.includes('.m3u8')) {
+        videoType = 'm3u8';
+    } else {
+        videoType = 'auto'; // 其他情况让播放器自己猜
+    }
+
     // 配置HLS.js选项
     const hlsConfig = {
         debug: false,
@@ -546,8 +556,8 @@ function initPlayer(videoUrl) {
     art = new Artplayer({
         container: '#player',
         url: videoUrl,
-        type: 'm3u8',
-        title: videoTitle,
+        type: videoType, // 【修改点 4】这里使用动态判断的类型，替换原来的 'm3u8'
+        title: currentVideoTitle || 'Video', // 建议加上 title 防止未定义
         volume: 0.8,
         isLive: false,
         muted: false,
