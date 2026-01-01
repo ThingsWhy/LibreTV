@@ -1,5 +1,5 @@
 // 全局常量：统一管理默认选中的API源
-const DEFAULT_SELECTED_APIS = ["dyttzy", "tyyszy", "bfzy", "ruyi", "wujin", "maotaizy"];
+const DEFAULT_SELECTED_APIS = ["dyttzy", "tyyszy", "ruyi", "wujin", "maotaizy"];
 
 // 全局变量
 // 1. 获取存储的值，如果没有则使用 DEFAULT_SELECTED_APIS 作为兜底
