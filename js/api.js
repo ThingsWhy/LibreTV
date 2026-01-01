@@ -139,20 +139,29 @@ async function handleApiRequest(url) {
                 let episodes = [];
                 
                 if (videoDetail.vod_play_url) {
-                    // 分割不同播放源
+                    // 分割不同播放源（采集站通常用 $$$ 分隔多条线路）
                     const playSources = videoDetail.vod_play_url.split('$$$');
                     
-                    // 提取第一个播放源的集数（通常为主要源）
-                    if (playSources.length > 0) {
-                        const mainSource = playSources[0];
-                        const episodeList = mainSource.split('#');
+                    // 【核心修改 1】查找包含 .m3u8 的源
+                    // 如果所有源都不含 m3u8，则 targetSource 为 undefined，后续逻辑不执行，episodes 为空
+                    const targetSource = playSources.find(source => source.includes('.m3u8'));
+                    
+                    if (targetSource) {
+                        const episodeList = targetSource.split('#');
                         
                         // 从每个集数中提取URL
                         episodes = episodeList.map(ep => {
                             const parts = ep.split('$');
-                            // 返回URL部分(通常是第二部分，如果有的话)
-                            return parts.length > 1 ? parts[1] : '';
-                        }).filter(url => url && (url.startsWith('http://') || url.startsWith('https://')));
+                            // 兼容格式：'第1集$https://...' 或 'https://...'
+                            // 如果有$分隔，取后半部分；否则取整体
+                            return parts.length > 1 ? parts[1] : parts[0];
+                        }).filter(url => {
+                            // 【核心修改 2】双重验证：必须是 HTTP(S) 链接且必须包含 .m3u8
+                            // 这样可以过滤掉分享页链接、MP4直链等不兼容格式
+                            return url && 
+                                   (url.startsWith('http://') || url.startsWith('https://')) && 
+                                   url.includes('.m3u8');
+                        });
                     }
                 }
                 
