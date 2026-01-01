@@ -1,5 +1,9 @@
+// 全局常量：统一管理默认选中的API源
+const DEFAULT_SELECTED_APIS = ["dyttzy", "tyyszy", "bfzy", "ruyi", "wujin", "maotaizy"];
+
 // 全局变量
-let selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || '["tyyszy", "ruyi", "wujin", "maotaizy"]'); // 默认选中资源
+// 1. 获取存储的值，如果没有则使用 DEFAULT_SELECTED_APIS 作为兜底
+let selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || JSON.stringify(DEFAULT_SELECTED_APIS));
 let customAPIs = JSON.parse(localStorage.getItem('customAPIs') || '[]'); // 存储自定义API列表
 
 // 添加当前播放的集数索引
@@ -25,10 +29,10 @@ document.addEventListener('DOMContentLoaded', function () {
     // 渲染搜索历史
     renderSearchHistory();
 
-    // 设置默认API选择（如果是第一次加载）
+    // 设置默认API选择（如果是第一次加载，或者 localStorage 被意外清空）
     if (!localStorage.getItem('hasInitializedDefaults')) {
-        // 默认选中资源
-        selectedAPIs = ["tyyszy", "bfzy", "dyttzy", "ruyi", "wujin"];
+        // 强制使用统一的默认列表
+        selectedAPIs = [...DEFAULT_SELECTED_APIS];
         localStorage.setItem('selectedAPIs', JSON.stringify(selectedAPIs));
 
         // 默认选中过滤开关
@@ -40,6 +44,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
         // 标记已初始化默认值
         localStorage.setItem('hasInitializedDefaults', 'true');
+        
+        // 刷新一下复选框状态以匹配新的默认值
+        initAPICheckboxes();
+        updateSelectedApiCount();
     }
 
     // 设置黄色内容过滤器开关初始状态
