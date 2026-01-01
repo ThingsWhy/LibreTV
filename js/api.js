@@ -91,18 +91,18 @@ async function handleApiRequest(url) {
             }
 
             // 对于有detail参数的源，都使用特殊处理方式
-            if (sourceCode !== 'custom' && API_SITES[sourceCode].detail) {
-                return await handleSpecialSourceDetail(id, sourceCode);
-            }
+            // if (sourceCode !== 'custom' && API_SITES[sourceCode].detail) {
+            //     return await handleSpecialSourceDetail(id, sourceCode);
+            // }
             
             // 如果是自定义API，并且传递了detail参数，尝试特殊处理
             // 优先 customDetail
-            if (sourceCode === 'custom' && customDetail) {
-                return await handleCustomApiSpecialDetail(id, customDetail);
-            }
-            if (sourceCode === 'custom' && url.searchParams.get('useDetail') === 'true') {
-                return await handleCustomApiSpecialDetail(id, customApi);
-            }
+            // if (sourceCode === 'custom' && customDetail) {
+            //     return await handleCustomApiSpecialDetail(id, customDetail);
+            // }
+            // if (sourceCode === 'custom' && url.searchParams.get('useDetail') === 'true') {
+            //     return await handleCustomApiSpecialDetail(id, customApi);
+            // }
             
             const detailUrl = customApi
                 ? `${customApi}${API_CONFIG.detail.path}${id}`
@@ -139,39 +139,57 @@ async function handleApiRequest(url) {
                 let episodes = [];
                 
                 if (videoDetail.vod_play_url) {
-                    // 分割不同播放源
+                    // 分割不同播放源 (通常格式: 线路1$$$线路2$$$线路3)
                     const playSources = videoDetail.vod_play_url.split('$$$');
                     
-                    // 【修改点 1】查找包含 .m3u8 或 .mp4 的源
-                    // 逻辑：优先找 m3u8，如果没找到，就找 mp4
+                    // --- 智能选源逻辑 ---
+                    // 1. 优先查找包含 .m3u8 的源
                     let targetSource = playSources.find(source => source.includes('.m3u8'));
+                    
+                    // 2. 如果没有 m3u8，尝试查找 .mp4
                     if (!targetSource) {
                         targetSource = playSources.find(source => source.includes('.mp4'));
                     }
                     
+                    // 3. 如果还是没有，且源列表不为空，这可能是没有任何后缀的直链（较少见），
+                    //    或者是不带后缀的 m3u8。作为最后的兜底，取第一个源。
+                    //    (注：如果你想严格控制，可以去掉这一步，只允许明确的格式)
+                    // if (!targetSource && playSources.length > 0) {
+                    //     targetSource = playSources[0];
+                    // }
+
                     if (targetSource) {
+                        // 处理所选源的集数列表
                         const episodeList = targetSource.split('#');
                         
-                        // 从每个集数中提取URL
                         episodes = episodeList.map(ep => {
+                            // 格式通常为 "第01集$http://..." 或直接 "http://..."
                             const parts = ep.split('$');
                             return parts.length > 1 ? parts[1] : parts[0];
                         }).filter(url => {
-                            // 【修改点 2】验证 URL：允许 http/https 开头，且必须包含 .m3u8 或 .mp4
-                            if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
-                                return false;
-                            }
+                            // --- URL 有效性清洗 ---
+                            if (!url) return false;
+                            
+                            // 必须是 http 或 https 开头
+                            if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
+                            
+                            // 再次校验后缀 (确保是我们要的格式)
+                            // 这一步能过滤掉比如 "第01集$http://share-page.html" 这种伪装成播放地址的网页
                             const lowerUrl = url.toLowerCase();
-                            return lowerUrl.includes('.m3u8') || lowerUrl.includes('.mp4');
+                            const isValidFormat = lowerUrl.includes('.m3u8') || lowerUrl.includes('.mp4');
+                            
+                            // 如果上面 targetSource 选的是“兜底”，这里可以放宽限制；
+                            // 但为了稳定性，建议只放行明确支持的格式
+                            return isValidFormat; 
                         });
                     }
                 }
                 
                 // 如果没有找到播放地址，尝试使用正则表达式查找m3u8链接
-                if (episodes.length === 0 && videoDetail.vod_content) {
-                    const matches = videoDetail.vod_content.match(M3U8_PATTERN) || [];
-                    episodes = matches.map(link => link.replace(/^\$/, ''));
-                }
+                // if (episodes.length === 0 && videoDetail.vod_content) {
+                //     const matches = videoDetail.vod_content.match(M3U8_PATTERN) || [];
+                //     episodes = matches.map(link => link.replace(/^\$/, ''));
+                // }
                 
                 return JSON.stringify({
                     code: 200,
